@@ -1,0 +1,14 @@
+{
+  "name": "proxybridgepro",
+  "version": "2.0.0",
+  "description": "IPv6 Rotating Backconnect Proxy Server",
+  "dependencies": [
+    "boost-asio",
+    "boost-system",
+    "openssl",
+    {"name": "curl", "features": ["ssl"]},
+    "nlohmann-json",
+    "spdlog",
+    {"name": "qtbase", "default-features": false, "features": ["widgets", "gui", "network", "concurrent", "png"]}
+  ]
+}

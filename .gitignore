@@ -1,0 +1,19 @@
+# Build directories
+build*/
+bin/
+lib/
+
+# Logs
+logs/
+*.log
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Config with generated secrets
+config.json
+*.tmp
