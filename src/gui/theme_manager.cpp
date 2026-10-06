@@ -17,10 +17,10 @@ void ThemeManager::buildPalette() {
     m_palette.background = QColor(24, 24, 27);
     m_palette.surface = QColor(32, 32, 36);
     m_palette.surfaceVariant = QColor(42, 42, 46);
-    m_palette.primary = QColor(245, 158, 11);    // Orange accent (like YBridge)
-    m_palette.primaryHover = QColor(217, 119, 6);
-    m_palette.accent = QColor(245, 158, 11);
-    m_palette.accentHover = QColor(251, 191, 36);
+    m_palette.primary = QColor(16, 185, 129);    // Orange accent (like YBridge)
+    m_palette.primaryHover = QColor(5, 150, 105);
+    m_palette.accent = QColor(16, 185, 129);
+    m_palette.accentHover = QColor(52, 211, 153);
     m_palette.text = QColor(228, 228, 231);
     m_palette.textSecondary = QColor(130, 130, 140);
     m_palette.border = QColor(55, 55, 60);

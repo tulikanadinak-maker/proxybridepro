@@ -24,15 +24,15 @@ void AdvancePage::setupUi() {
 
     // Experimental warning
     auto* warn = new QFrame(); warn->setObjectName("card");
-    warn->setStyleSheet("background-color: #3d2e00; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px;");
+    warn->setStyleSheet("background-color: #052e1f; border: 1px solid #10b981; border-radius: 8px; padding: 16px;");
     auto* warnLayout = new QVBoxLayout(warn);
     auto* warnTitle = new QLabel("\xe2\x9a\xa0 Experimental");
-    warnTitle->setStyleSheet("color: #f59e0b; font-weight: 600;");
+    warnTitle->setStyleSheet("color: #10b981; font-weight: 600;");
     warnLayout->addWidget(warnTitle);
     auto* warnText = new QLabel("Custom UDP Protocol enables zero-RTT transport with reduced latency. "
                                  "Kill Switch blocks all traffic if the custom protocol fails. "
                                  "These features are experimental and may affect stability.");
-    warnText->setWordWrap(true); warnText->setStyleSheet("color: #d4a246;");
+    warnText->setWordWrap(true); warnText->setStyleSheet("color: #6ee7b7;");
     warnLayout->addWidget(warnText);
     layout->addWidget(warn);
 

@@ -15,7 +15,7 @@ void Sidebar::setupUi() {
     m_layout->setSpacing(4);
 
     auto* logo = new QLabel("ProxyBridge Pro");
-    logo->setStyleSheet("font-size: 14px; font-weight: 700; color: #f59e0b; padding: 8px 12px 20px 12px;");
+    logo->setStyleSheet("font-size: 14px; font-weight: 700; color: #10b981; padding: 8px 12px 20px 12px;");
     m_layout->addWidget(logo);
 
     // Status section
