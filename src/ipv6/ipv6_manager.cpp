@@ -194,6 +194,10 @@ void IPv6Manager::resetAll() {
     }
 }
 
+#ifdef _WIN32
+static bool addressExistsOnSystem(const IPv6Address& addr);
+#endif
+
 std::optional<std::pair<uint32_t, std::string>> IPv6Manager::getNextAddressSlot() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_slots.empty()) return std::nullopt;
@@ -203,6 +207,15 @@ std::optional<std::pair<uint32_t, std::string>> IPv6Manager::getNextAddressSlot(
         uint32_t index = m_currentIndex.fetch_add(1) % static_cast<uint32_t>(m_slots.size());
         auto& slot = m_slots[index];
         if (!slot.active) continue;
+#ifdef _WIN32
+        // Only hand out addresses that are STILL on the interface right now.
+        // A slot can go stale (e.g. Windows removed the address), and binding
+        // a dead address makes the OS silently override the source.
+        if (!addressExistsOnSystem(slot.address)) {
+            slot.active = false;
+            continue;
+        }
+#endif
         slot.requestCount++;
         return std::make_pair(slot.id, slot.address.toString());
     }
