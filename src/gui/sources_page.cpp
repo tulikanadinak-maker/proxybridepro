@@ -136,6 +136,19 @@ QWidget* SourcesPage::createEditor() {
         if (!prefix.startsWith("No ")) {
             m_prefixEdit->setText(prefix);
         }
+        // Auto-match the interface to the prefix's origin interface so the
+        // user never has to pick it manually (prevents mismatched bindings).
+        if (text.contains(" (") && text.endsWith(")")) {
+            QString originIface = text.section(" (", -1).chopped(1).trimmed();
+            if (!originIface.isEmpty()) {
+                int idx = m_interfaceCombo->findText(originIface, Qt::MatchFixedString);
+                if (idx >= 0) {
+                    m_interfaceCombo->setCurrentIndex(idx);
+                } else {
+                    m_interfaceCombo->setCurrentText(originIface);
+                }
+            }
+        }
     });
 
     // Trigger initial selection
