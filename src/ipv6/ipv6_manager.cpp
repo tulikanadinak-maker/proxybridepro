@@ -317,7 +317,10 @@ bool IPv6Manager::bindAddress(const IPv6Address& addr, const std::string& iface)
                 row.SkipAsSource = FALSE;
                 DWORD st = CreateUnicastIpAddressEntry(&row);
                 free(adapters);
-                if (st == NO_ERROR || st == ERROR_OBJECT_ALREADY_EXISTS) return true;
+                if (st == NO_ERROR || st == ERROR_OBJECT_ALREADY_EXISTS) {
+                    if (addressExistsOnSystem(addr)) return true;
+                    // Not present despite API success - fall through to netsh.
+                }
                 // Fall through to netsh if the API failed
                 break;
             }
@@ -345,9 +348,13 @@ bool IPv6Manager::bindAddress(const IPv6Address& addr, const std::string& iface)
         GetExitCodeProcess(pi.hProcess, &exitCode);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-        return exitCode == 0;
+        if (exitCode != 0) return false;
     }
-    return false;
+    else {
+        return false;
+    }
+    // Trust nothing: confirm the address is really on an interface now.
+    return addressExistsOnSystem(addr);
 #else
     // Linux: add address via `ip -6 addr add <addr>/<plen> dev <iface>`
     if (!isValidIpv6Token(addr.toString()) || !isValidIfaceToken(iface)) return false;
@@ -355,6 +362,28 @@ bool IPv6Manager::bindAddress(const IPv6Address& addr, const std::string& iface)
     return runCommand({"ip", "-6", "addr", "add", cidr, "dev", iface});
 #endif
 }
+
+// Returns true if the given address is currently present on any interface.
+#ifdef _WIN32
+static bool addressExistsOnSystem(const IPv6Address& addr) {
+    MIB_UNICASTIPADDRESS_TABLE* table = nullptr;
+    if (GetUnicastIpAddressTable(AF_INET6, &table) != NO_ERROR || !table)
+        return false;
+    bool found = false;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        if (table->Table[i].Address.Ipv6.sin6_family == AF_INET6 &&
+            std::memcmp(&table->Table[i].Address.Ipv6.sin6_addr,
+                        addr.bytes.data(), 16) == 0) {
+            found = true;
+            break;
+        }
+    }
+    FreeMibTable(table);
+    return found;
+}
+#else
+static bool addressExistsOnSystem(const IPv6Address&) { return true; }
+#endif
 
 bool IPv6Manager::unbindAddress(const IPv6Address& addr, const std::string& iface) {
 #ifdef _WIN32
