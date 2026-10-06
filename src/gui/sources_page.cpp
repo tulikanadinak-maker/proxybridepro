@@ -19,6 +19,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <QTimer>
 
 namespace ProxyBridge {
@@ -209,14 +210,27 @@ void SourcesPage::refreshDetection() {
     if (!bound.ifaceName.empty() && mgr.isActive()) {
         std::string boundPrefix = bound.prefix.toString();
         bool stillPresent = false;
+        uint32_t boundLifetime = 0;
         const IPv6Subnet* best = nullptr;
         for (const auto& sub : m_detectedSubnets) {
             if (sub.prefix.toString() == boundPrefix &&
-                sub.ifaceName == bound.ifaceName) { stillPresent = true; break; }
-            if (!sub.gateway.empty() && (!best || sub.ifaceName == bound.ifaceName))
+                sub.ifaceName == bound.ifaceName) { stillPresent = true; boundLifetime = sub.validLifetimeSec; }
+            if (!sub.gateway.empty() && (!best ||
+                (sub.ifaceName == bound.ifaceName && best->ifaceName != bound.ifaceName) ||
+                (sub.ifaceName == bound.ifaceName && sub.validLifetimeSec > best->validLifetimeSec)))
                 best = &sub;
         }
-        if (!stillPresent && best) {
+        // Re-bind ALSO when a same-interface internet prefix has a strictly
+        // longer remaining lifetime than the bound one (XL rotates prefixes
+        // while the old one is still valid for a while).
+        static std::chrono::steady_clock::time_point lastRebind{};
+        bool cooldownOk = std::chrono::steady_clock::now() - lastRebind > std::chrono::seconds(120);
+        bool newerExists = best && stillPresent && cooldownOk &&
+            boundLifetime > 0 &&
+            best->validLifetimeSec > boundLifetime + 600 &&
+            best->ifaceName == bound.ifaceName;
+        if ((!stillPresent || newerExists) && best) {
+            lastRebind = std::chrono::steady_clock::now();
             uint32_t slotCountVal = mgr.slotCount();
             mgr.stop();
             mgr.initialize(*best, slotCountVal);

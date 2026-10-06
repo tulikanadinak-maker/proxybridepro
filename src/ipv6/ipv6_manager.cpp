@@ -400,6 +400,25 @@ static bool addressExistsOnSystem(const IPv6Address&) { return true; }
 
 bool IPv6Manager::unbindAddress(const IPv6Address& addr, const std::string& iface) {
 #ifdef _WIN32
+    // Prefer the IP Helper API: deterministic and does not depend on netsh.
+    {
+        ULONG bufLen = 15000;
+        MIB_UNICASTIPADDRESS_TABLE* uniTable = nullptr;
+        if (GetUnicastIpAddressTable(AF_INET6, &uniTable) == NO_ERROR && uniTable) {
+            for (ULONG i = 0; i < uniTable->NumEntries; ++i) {
+                const auto& row = uniTable->Table[i];
+                if (row.Address.Ipv6.sin6_family == AF_INET6 &&
+                    std::memcmp(&row.Address.Ipv6.sin6_addr, addr.bytes.data(), 16) == 0) {
+                    DWORD st = DeleteUnicastIpAddressEntry(&row);
+                    FreeMibTable(uniTable);
+                    return st == NO_ERROR;
+                }
+            }
+            FreeMibTable(uniTable);
+            return true;  // not present = already unbound
+        }
+    }
+
     std::string cmd = std::string("netsh interface ipv6 delete address \"") + iface +
                       "\" " + addr.toString();
 
