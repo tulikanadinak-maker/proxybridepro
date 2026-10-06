@@ -19,6 +19,7 @@
 #endif
 
 #include <algorithm>
+#include <QTimer>
 
 namespace ProxyBridge {
 
@@ -60,6 +61,13 @@ void SourcesPage::setupUi() {
     connect(m_applyButton, &QPushButton::clicked, this, &SourcesPage::onApply);
     connect(m_removeButton, &QPushButton::clicked, this, &SourcesPage::onRemove);
     layout->addLayout(btnLayout);
+
+    // Auto-detect: re-scan every 10s so ISP prefix changes are picked up
+    // without user interaction.
+    m_autoScanTimer = new QTimer(this);
+    m_autoScanTimer->setInterval(10000);
+    connect(m_autoScanTimer, &QTimer::timeout, this, [this]() { refreshDetection(); });
+    m_autoScanTimer->start();
     layout->addStretch();
 }
 
@@ -188,6 +196,36 @@ void SourcesPage::refreshDetection() {
                 pfx = prevPrefix.split("/").first().trimmed();
             if (!pfx.startsWith("No ") && !pfx.isEmpty())
                 m_prefixEdit->setText(pfx);
+        }
+    }
+
+    // ---- Self-healing: if the bound pool prefix disappeared from the wire
+    // (ISP re-delegated the /64) but a fresh internet-connected prefix exists,
+    // re-bind the pool automatically so the proxy stays relevant. ----
+    auto& mgr = Application::instance().ipv6Manager();
+    const IPv6Subnet& bound = mgr.subnet();
+    if (!bound.ifaceName.empty() && mgr.isActive()) {
+        std::string boundPrefix = bound.prefix.toString();
+        bool stillPresent = false;
+        const IPv6Subnet* best = nullptr;
+        for (const auto& sub : m_detectedSubnets) {
+            if (sub.prefix.toString() == boundPrefix &&
+                sub.ifaceName == bound.ifaceName) { stillPresent = true; break; }
+            if (!sub.gateway.empty() && (!best || sub.ifaceName == bound.ifaceName))
+                best = &sub;
+        }
+        if (!stillPresent && best) {
+            uint32_t slotCountVal = mgr.slotCount();
+            mgr.stop();
+            mgr.initialize(*best, slotCountVal);
+            if (mgr.start()) {
+                Application::instance().logManager().log(LogLevel::Warning,
+                    "IPv6 prefix changed by ISP: " + boundPrefix + " -> " +
+                    best->prefix.toString() + " - pool re-bound automatically", "Sources");
+            } else {
+                Application::instance().logManager().log(LogLevel::Error,
+                    "IPv6 prefix changed but re-bind failed (run as Administrator?)", "Sources");
+            }
         }
     }
 }

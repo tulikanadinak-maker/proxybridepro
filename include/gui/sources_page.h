@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QListWidget>
@@ -49,6 +50,7 @@ private:
     QPushButton* m_addButton{nullptr};
     QPushButton* m_applyButton{nullptr};
     QPushButton* m_removeButton{nullptr};
+    QTimer* m_autoScanTimer{nullptr};
 
     int m_selectedSourceId{-1};
 };
