@@ -27,11 +27,35 @@ void AsyncSocket::asyncConnect(const std::string& host, uint16_t port,
                                     tcp::resolver::results_type results) {
             if (ec) { self->m_timer.cancel(); callback(ec); return; }
             auto& sock = self->m_isSsl ? self->m_sslSocket->lowest_layer() : *self->m_socket;
-            asio::async_connect(sock, results,
-                [self, callback](const boost::system::error_code& ec, const tcp::endpoint&) {
+
+            // The socket is already opened and bound to a specific local IPv6
+            // address. Re-opening it (asio::async_connect does this when the
+            // resolved family does not match) would DESTROY the binding and
+            // Windows would silently pick its default source address. Pick a
+            // single IPv6 endpoint that matches the bound protocol and connect
+            // with plain async_connect on that one endpoint only.
+            boost::system::error_code probeEc;
+            auto boundLocal = sock.local_endpoint(probeEc);
+            tcp::endpoint chosen{};
+            bool found = false;
+            for (const auto& entry : results) {
+                const auto& ep = entry.endpoint();
+                if (ep.address().is_v6() == boundLocal.address().is_v6()) {
+                    chosen = ep;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                self->m_timer.cancel();
+                callback(boost::asio::error::address_family_not_supported);
+                return;
+            }
+            sock.async_connect(chosen,
+                [self, callback](const boost::system::error_code& ec2) {
                     self->m_timer.cancel();
-                    if (!ec) self->m_connected = true;
-                    callback(ec);
+                    if (!ec2) self->m_connected = true;
+                    callback(ec2);
                 });
         });
 }
