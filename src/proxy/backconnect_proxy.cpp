@@ -59,11 +59,11 @@ void BackconnectProxy::connectOutbound(const std::string& targetHost, uint16_t t
         // Target has IPv6 - fall through to pool binding (rotation applies here)
     }
 
-    // Get IPv6 from pool or manager
-    std::string bindAddr = m_pool.getNext();
-    if (bindAddr.empty()) {
-        bindAddr = Application::instance().ipv6Manager().getNextAddress();
-    }
+    // Single source of truth: use the IPv6Manager's ACTIVE (actually bound)
+    // slots. The SubnetPool generates its own random addresses that may never
+    // be bound - selecting one of those silently fails and Windows overrides
+    // the source address with the SLAAC default.
+    std::string bindAddr = Application::instance().ipv6Manager().getNextAddress();
 
     if (!bindAddr.empty()) {
         Application::instance().logManager().log(LogLevel::Info,

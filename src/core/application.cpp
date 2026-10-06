@@ -124,9 +124,11 @@ bool Application::startProxy() {
         m_logManager->log(LogLevel::Info, "  IPv6: no pool configured (using default route)", "Application");
     }
 
-    // Start the proxy server (bind pool addresses to the interface first)
+    // Start the proxy server. Binding is handled solely by IPv6Manager
+    // (GUI Apply/Start); SubnetPool must NOT generate and bind its own random
+    // addresses here - that created a duplicate, half-bound pool and caused
+    // outbound binds to fail silently.
     m_subnetPool->build();
-    m_subnetPool->bindAll();
     bool ok = m_proxyServer->start(*m_subnetPool);
     if (!ok) {
         m_logManager->log(LogLevel::Error, "Failed to start proxy server!", "Application");
