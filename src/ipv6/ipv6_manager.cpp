@@ -405,9 +405,14 @@ std::vector<IPv6Subnet> IPv6Manager::detectAllSubnets() {
                 // Skip ULA (fd::)
                 if (sa6->sin6_addr.s6_bytes[0] == 0xFD) continue;
 
-                // Only accept /64 prefixes
                 int prefixLen = unicast->OnLinkPrefixLength;
-                if (prefixLen != 64) continue;
+                if (prefixLen != 64) {
+                    // Windows sometimes reports a non-64 OnLinkPrefixLength for
+                    // SLAAC/temporary addresses even though the on-link subnet
+                    // is /64. Derive the /64 prefix from the address itself so
+                    // a changed ISP delegation is still detected.
+                    if (prefixLen < 1 || prefixLen > 64) prefixLen = 64;
+                }
 
                 // Extract /64 prefix (zero out host portion - last 8 bytes)
                 IPv6Subnet subnet;
