@@ -29,6 +29,36 @@ BackconnectProxy::~BackconnectProxy() = default;
 void BackconnectProxy::connectOutbound(const std::string& targetHost, uint16_t targetPort,
     std::function<void(std::shared_ptr<AsyncSocket>, const boost::system::error_code&)> callback) {
 
+    // Resolve the target FIRST so we know its address family.
+    // IPv4 targets cannot be bound to an IPv6 source address - skip the pool
+    // entirely and use the default IPv4 route (proxy stays functional for
+    // IPv4-only sites; rotation applies to IPv6 traffic).
+    boost::system::error_code resEc;
+    boost::asio::ip::tcp::resolver resolver(m_ioContext);
+    auto results = resolver.resolve(targetHost, std::to_string(targetPort), resEc);
+    if (resEc) {
+        Application::instance().logManager().log(LogLevel::Warning,
+            "Resolve failed for " + targetHost + ": " + resEc.message(), "Backconnect");
+    } else {
+        bool hasV6 = false;
+        for (const auto& entry : results) {
+            if (!entry.endpoint().address().is_v4()) { hasV6 = true; break; }
+        }
+        if (!hasV6) {
+            // Target is IPv4-only - cannot bind an IPv6 source; default v4 route.
+            Application::instance().logManager().log(LogLevel::Info,
+                "Outbound: " + targetHost + ":" + std::to_string(targetPort) +
+                " | IPv4-only target, default route (no bind)", "Backconnect");
+            auto remote4 = std::make_shared<AsyncSocket>(m_ioContext);
+            remote4->asyncConnect(targetHost, targetPort,
+                [callback, remote4](const boost::system::error_code& ec) {
+                    callback(remote4, ec);
+                });
+            return;
+        }
+        // Target has IPv6 - fall through to pool binding (rotation applies here)
+    }
+
     // Get IPv6 from pool or manager
     std::string bindAddr = m_pool.getNext();
     if (bindAddr.empty()) {
