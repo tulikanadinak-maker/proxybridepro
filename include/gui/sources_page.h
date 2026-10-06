@@ -10,6 +10,8 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QLabel>
+#include <vector>
+#include "ipv6/ipv6_manager.h"
 
 namespace ProxyBridge {
 
@@ -21,6 +23,7 @@ public:
     ~SourcesPage() override;
 
     void refreshSources();
+    void refreshDetection();
 
 private slots:
     void onAdd();
@@ -34,6 +37,8 @@ private:
     QWidget* createEditor();
 
     QListWidget* m_sourceList{nullptr};
+    QPushButton* m_refreshButton{nullptr};
+    std::vector<IPv6Subnet> m_detectedSubnets;
     QLineEdit* m_nameEdit{nullptr};
     QComboBox* m_modeCombo{nullptr};
     QComboBox* m_interfaceCombo{nullptr};

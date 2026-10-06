@@ -18,6 +18,8 @@
 #undef interface
 #endif
 
+#include <algorithm>
+
 namespace ProxyBridge {
 
 static QComboBox* s_prefixCombo = nullptr;
@@ -41,6 +43,10 @@ void SourcesPage::setupUi() {
     layout->addWidget(createEditor());
 
     auto* btnLayout = new QHBoxLayout();
+    m_refreshButton = new QPushButton("Refresh Detection");
+    m_refreshButton->setToolTip("Re-scan network interfaces and IPv6 prefixes (use after switching WiFi/Ethernet)");
+    btnLayout->addWidget(m_refreshButton);
+    connect(m_refreshButton, &QPushButton::clicked, this, [this]() { refreshDetection(); });
     m_addButton = new QPushButton("Add");
     btnLayout->addWidget(m_addButton);
     m_applyButton = new QPushButton("Apply");
@@ -76,64 +82,23 @@ QWidget* SourcesPage::createEditor() {
     m_modeCombo->addItems({"Auto", "Manual"});
     form->addRow("MODE", m_modeCombo);
 
-    // Interface dropdown - auto detect
+    // Interface dropdown - populated by refreshDetection() (auto-scan every time)
     m_interfaceCombo = new QComboBox();
     m_interfaceCombo->setEditable(true);
-#ifdef _WIN32
-    {
-        ULONG bufLen = 15000;
-        auto* addrs = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(bufLen));
-        if (addrs) {
-            DWORD res = GetAdaptersAddresses(AF_INET6, GAA_FLAG_INCLUDE_PREFIX, nullptr, addrs, &bufLen);
-            if (res == ERROR_BUFFER_OVERFLOW) {
-                free(addrs);
-                addrs = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(bufLen));
-                if (addrs) res = GetAdaptersAddresses(AF_INET6, GAA_FLAG_INCLUDE_PREFIX, nullptr, addrs, &bufLen);
-            }
-            if (res == NO_ERROR && addrs) {
-                for (auto* a = addrs; a; a = a->Next) {
-                    if (a->OperStatus != IfOperStatusUp) continue;
-                    char name[256];
-                    WideCharToMultiByte(CP_UTF8, 0, a->FriendlyName, -1, name, sizeof(name), nullptr, nullptr);
-                    m_interfaceCombo->addItem(QString::fromUtf8(name));
-                }
-            }
-            if (addrs) free(addrs);
-        }
-    }
-#endif
-    if (m_interfaceCombo->count() == 0) m_interfaceCombo->addItem("WiFi");
     form->addRow("INTERFACE", m_interfaceCombo);
 
-    // IPv6 PREFIX - editable combo with detected prefixes
+    // IPv6 PREFIX - editable combo populated by refreshDetection()
     m_prefixEdit = new QLineEdit();
     m_prefixEdit->setPlaceholderText("e.g. 2400:9800:9b3:fdc5::");
 
-    // Detect prefixes and add to a combo
     auto* prefixCombo = new QComboBox();
     prefixCombo->setEditable(true);
     prefixCombo->setMinimumWidth(300);
 
-    // Auto-detect IPv6 prefixes
-    auto detected = IPv6Manager::detectAllSubnets();
-    for (const auto& sub : detected) {
-        QString item = QString::fromStdString(sub.prefix.toString()) +
-                       "/" + QString::number(sub.prefixLength) +
-                       " (" + QString::fromStdString(sub.ifaceName) + ")";
-        prefixCombo->addItem(item);
-    }
-
-    if (prefixCombo->count() == 0) {
-        prefixCombo->addItem("No IPv6 prefix detected - type manually");
-    }
-
-    // When user selects from combo, extract prefix into m_prefixEdit
-    connect(prefixCombo, &QComboBox::currentTextChanged, [this](const QString& text) {
-        // Extract IP part: everything before the first /
+    QObject::connect(prefixCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         QString prefix = text.split("/").first().trimmed();
-        // Remove parenthetical info
         if (prefix.contains(" (")) prefix = prefix.split(" (").first().trimmed();
-        if (!prefix.startsWith("No ")) {
+        if (!prefix.startsWith("No ") && !prefix.isEmpty()) {
             m_prefixEdit->setText(prefix);
         }
         // Auto-match the interface to the prefix's origin interface so the
@@ -142,24 +107,15 @@ QWidget* SourcesPage::createEditor() {
             QString originIface = text.section(" (", -1).chopped(1).trimmed();
             if (!originIface.isEmpty()) {
                 int idx = m_interfaceCombo->findText(originIface, Qt::MatchFixedString);
-                if (idx >= 0) {
-                    m_interfaceCombo->setCurrentIndex(idx);
-                } else {
-                    m_interfaceCombo->setCurrentText(originIface);
-                }
+                if (idx >= 0) m_interfaceCombo->setCurrentIndex(idx);
+                else m_interfaceCombo->setCurrentText(originIface);
             }
         }
     });
 
-    // Trigger initial selection
-    if (prefixCombo->count() > 0 && !detected.empty()) {
-        prefixCombo->setCurrentIndex(0);
-        QString firstPrefix = QString::fromStdString(detected[0].prefix.toString());
-        m_prefixEdit->setText(firstPrefix);
-    }
-
     s_prefixCombo = prefixCombo;
     form->addRow("IPv6 PREFIX", prefixCombo);
+    refreshDetection();
 
     // Also show the extracted prefix (read-only info)
     form->addRow("SELECTED", m_prefixEdit);
@@ -179,6 +135,51 @@ QWidget* SourcesPage::createEditor() {
     form->addRow(m_enabledCheck);
 
     return group;
+}
+
+void SourcesPage::refreshDetection() {
+    if (!m_interfaceCombo) return;
+
+    // Remember current selection to restore if still valid
+    QString prevIface = m_interfaceCombo->currentText();
+    QComboBox* prefixCombo = s_prefixCombo;
+    QString prevPrefix = prefixCombo ? prefixCombo->currentText() : QString();
+
+    m_detectedSubnets = IPv6Manager::detectAllSubnets();
+
+    // Sort: subnets WITH a gateway (internet) first
+    std::vector<IPv6Subnet> subs = m_detectedSubnets;
+    std::stable_sort(subs.begin(), subs.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
+        return !a.gateway.empty() && b.gateway.empty();
+    });
+
+    m_interfaceCombo->blockSignals(true);
+    m_interfaceCombo->clear();
+    for (const auto& sub : subs) {
+        QString name = QString::fromStdString(sub.ifaceName);
+        if (m_interfaceCombo->findText(name) < 0) m_interfaceCombo->addItem(name);
+    }
+    if (m_interfaceCombo->count() == 0) m_interfaceCombo->addItem("WiFi");
+    if (!prevIface.isEmpty() && m_interfaceCombo->findText(prevIface) >= 0)
+        m_interfaceCombo->setCurrentText(prevIface);
+    m_interfaceCombo->blockSignals(false);
+
+    if (prefixCombo) {
+        prefixCombo->blockSignals(true);
+        prefixCombo->clear();
+        for (const auto& sub : subs) {
+            QString tag = sub.gateway.empty() ? QString() : QStringLiteral(" [INTERNET]");
+            QString item = QString::fromStdString(sub.prefix.toString()) + "/" +
+                           QString::number(sub.prefixLength) + " (" +
+                           QString::fromStdString(sub.ifaceName) + ")" + tag;
+            prefixCombo->addItem(item);
+        }
+        if (prefixCombo->count() == 0)
+            prefixCombo->addItem("No IPv6 prefix detected - connect a network with IPv6");
+        if (!prevPrefix.isEmpty() && prefixCombo->findText(prevPrefix) >= 0)
+            prefixCombo->setCurrentText(prevPrefix);
+        prefixCombo->blockSignals(false);
+    }
 }
 
 void SourcesPage::refreshSources() {
