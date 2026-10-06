@@ -179,6 +179,16 @@ void SourcesPage::refreshDetection() {
         if (!prevPrefix.isEmpty() && prefixCombo->findText(prevPrefix) >= 0)
             prefixCombo->setCurrentText(prevPrefix);
         prefixCombo->blockSignals(false);
+        // Re-sync the SELECTED field manually (signals were blocked above)
+        if (prefixCombo->count() > 0) {
+            QString first = prefixCombo->itemText(0);
+            QString pfx = first.split("/").first().trimmed();
+            if (pfx.contains(" (")) pfx = pfx.split(" (").first().trimmed();
+            if (!prevPrefix.isEmpty() && prefixCombo->findText(prevPrefix) >= 0)
+                pfx = prevPrefix.split("/").first().trimmed();
+            if (!pfx.startsWith("No ") && !pfx.isEmpty())
+                m_prefixEdit->setText(pfx);
+        }
     }
 }
 
