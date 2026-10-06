@@ -158,7 +158,9 @@ void SourcesPage::refreshDetection() {
     // Sort: subnets WITH a gateway (internet) first
     std::vector<IPv6Subnet> subs = m_detectedSubnets;
     std::stable_sort(subs.begin(), subs.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
-        return !a.gateway.empty() && b.gateway.empty();
+        bool aNet = !a.gateway.empty(), bNet = !b.gateway.empty();
+        if (aNet != bNet) return aNet;                 // internet-connected first
+        return a.validLifetimeSec > b.validLifetimeSec; // then newest prefix first
     });
 
     m_interfaceCombo->blockSignals(true);

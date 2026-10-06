@@ -429,6 +429,13 @@ bool IPv6Manager::unbindAddress(const IPv6Address& addr, const std::string& ifac
 
 IPv6Subnet IPv6Manager::autoDetectSubnet() {
     auto all = detectAllSubnets();
+    // Prefer internet-connected prefixes, then the one with the most
+    // remaining lifetime (i.e. the newest ISP delegation).
+    std::stable_sort(all.begin(), all.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
+        bool aNet = !a.gateway.empty(), bNet = !b.gateway.empty();
+        if (aNet != bNet) return aNet;
+        return a.validLifetimeSec > b.validLifetimeSec;
+    });
     if (!all.empty()) return all[0];
     return IPv6Subnet{};
 }
@@ -501,11 +508,18 @@ std::vector<IPv6Subnet> IPv6Manager::detectAllSubnets() {
                 subnet.prefixLength = 64;
                 subnet.ifaceName = ifName;
                 subnet.gateway = gateway;
+                subnet.validLifetimeSec = unicast->ValidLifetime;
 
-                // Avoid duplicates
+                // Avoid duplicates - keep the entry with the LONGEST remaining
+                // lifetime (the newest RA / most current ISP prefix).
                 bool duplicate = false;
-                for (const auto& existing : results) {
-                    if (existing.prefix == subnet.prefix) { duplicate = true; break; }
+                for (auto& existing : results) {
+                    if (existing.prefix == subnet.prefix) {
+                        duplicate = true;
+                        if (subnet.validLifetimeSec > existing.validLifetimeSec)
+                            existing.validLifetimeSec = subnet.validLifetimeSec;
+                        break;
+                    }
                 }
                 if (!duplicate) {
                     results.push_back(subnet);

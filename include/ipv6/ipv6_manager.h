@@ -46,6 +46,7 @@ struct IPv6Subnet {
     int prefixLength = 64;   // /48, /56, /64
     std::string ifaceName;    // Network interface name
     std::string gateway;      // Default gateway
+    uint32_t validLifetimeSec = 0;  // remaining RA lifetime (larger = newer prefix)
 };
 
 /**
