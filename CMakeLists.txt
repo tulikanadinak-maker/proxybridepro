@@ -103,6 +103,10 @@ target_link_libraries(ProxyBridgeGui PUBLIC
 )
 
 # Main executable
+add_executable(pb_headless tests/headless_main.cpp)
+    target_link_libraries(pb_headless PRIVATE ProxyBridgeCore)
+    target_include_directories(pb_headless PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
 add_executable(ProxyBridgePro WIN32
     src/main.cpp
     resources/resources.qrc
