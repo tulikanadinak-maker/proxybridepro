@@ -137,18 +137,24 @@ void BackconnectProxy::connectWithRetry(const std::string& targetHost, uint16_t 
                 "Connected | Requested: " + bindAddr + " | Actual local: " + localEp, "Backconnect");
 
             bool verified = false;
+            // Full-address compare (strip possible trailing "::" and any
+            // zone/port suffix from the local endpoint before matching).
             std::string reqNorm = bindAddr;
             if (reqNorm.size() > 2 && reqNorm.substr(reqNorm.size()-2) == "::") {
                 reqNorm = reqNorm.substr(0, reqNorm.size()-2);
             }
-
-            if (localEp.find(reqNorm) != std::string::npos) {
+            std::string localNorm = localEp;
+            // localEndpoint may append ":port" - strip it (text after last ':'
+            // that is all digits).
+            auto pos = localNorm.rfind(':');
+            if (pos != std::string::npos) {
+                bool digits = !localNorm.empty();
+                for (size_t i = pos + 1; i < localNorm.size(); ++i)
+                    if (!isdigit(static_cast<unsigned char>(localNorm[i]))) { digits = false; break; }
+                if (digits) localNorm = localNorm.substr(0, pos);
+            }
+            if (!reqNorm.empty() && localNorm.find(reqNorm) != std::string::npos) {
                 verified = true;
-            } else {
-                std::string reqPrefix = bindAddr.substr(0, 19);
-                if (localEp.find(reqPrefix) != std::string::npos) {
-                    verified = true;
-                }
             }
 
             if (!verified && !localEp.empty()) {

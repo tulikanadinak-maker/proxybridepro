@@ -290,9 +290,46 @@ bool runCommand(const std::vector<std::string>& argv) {
 
 bool IPv6Manager::bindAddress(const IPv6Address& addr, const std::string& iface) {
 #ifdef _WIN32
-    // Use netsh to add IPv6 address to interface
+    // Prefer the IP Helper API over netsh: CreateUnicastIpAddressEntry lets us
+    // set DadState=Preferred so the address is immediately usable as a source
+    // address. With netsh, new addresses sit in DAD (duplicate detection) for a
+    // few seconds and Windows silently ignores them for outbound binds.
+    {
+        ULONG bufLen = 15000;
+        auto* adapters = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(malloc(bufLen));
+        ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                      GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
+        if (adapters &&
+            GetAdaptersAddresses(AF_INET6, flags, nullptr, adapters, &bufLen) == NO_ERROR) {
+            for (auto* ad = adapters; ad; ad = ad->Next) {
+                char name[256];
+                WideCharToMultiByte(CP_UTF8, 0, ad->FriendlyName, -1, name, sizeof(name), nullptr, nullptr);
+                if (iface != name) continue;
+                MIB_UNICASTIPADDRESS_ROW row;
+                InitializeUnicastIpAddressEntry(&row);
+                row.InterfaceIndex = ad->Ipv6IfIndex;
+                row.Address.Ipv6.sin6_family = AF_INET6;
+                std::memcpy(&row.Address.Ipv6.sin6_addr, addr.bytes.data(), 16);
+                row.OnLinkPrefixLength = static_cast<UINT8>(m_subnet.prefixLength > 0 ? m_subnet.prefixLength : 64);
+                row.DadState = IpDadStatePreferred;
+                row.ValidLifetime = 0xffffffff;
+                row.PreferredLifetime = 0xffffffff;
+                row.SkipAsSource = FALSE;
+                DWORD st = CreateUnicastIpAddressEntry(&row);
+                free(adapters);
+                if (st == NO_ERROR || st == ERROR_OBJECT_ALREADY_EXISTS) return true;
+                // Fall through to netsh if the API failed
+                break;
+            }
+            free(adapters);
+        } else if (adapters) {
+            free(adapters);
+        }
+    }
+
+    // Fallback: netsh
     std::string cmd = std::string("netsh interface ipv6 add address \"") + iface +
-                      "\" " + addr.toString() + " type=unicast validlifetime=infinite preferredlifetime=infinite store=active";
+                      "\" " + addr.toString() + " type=unicast validlifetime=infinite preferredlifetime=infinite store=active skipassource=false";
 
     STARTUPINFOA si = {};
     PROCESS_INFORMATION pi = {};
