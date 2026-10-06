@@ -42,6 +42,7 @@ void ProxyPage::setupUi() {
     layout->addWidget(createNetworkSection());
     layout->addWidget(createAuthSection());
     layout->addWidget(createBindingSection());
+    layout->addWidget(createProtocolSection());
 
     // Buttons
     auto* btnLayout = new QHBoxLayout();
@@ -150,12 +151,26 @@ QWidget* ProxyPage::createBindingSection() {
     return group;
 }
 
+QWidget* ProxyPage::createProtocolSection() {
+    auto* group = new QGroupBox("Protocols");
+    auto* form = new QFormLayout(group);
+    m_socks5Check = new QCheckBox("SOCKS5 (recommended for VPN clients / apps)");
+    m_httpCheck = new QCheckBox("HTTP/HTTPS (recommended for browsers)");
+    m_socks5Check->setChecked(true);
+    m_httpCheck->setChecked(true);
+    form->addRow(m_socks5Check);
+    form->addRow(m_httpCheck);
+    return group;
+}
+
 void ProxyPage::loadConfig() {
     auto cfg = Application::instance().configManager().config();
     m_passwordEdit->setText(QString::fromStdString(cfg.proxy.authPassword));
     m_ipCountSpin->setValue(static_cast<int>(cfg.proxy.maxIpCount));
     m_hostEdit->setText(QString::fromStdString(cfg.proxy.bindHost));
     m_portSpin->setValue(cfg.proxy.bindPort);
+    m_socks5Check->setChecked(cfg.proxy.enableSocks5);
+    m_httpCheck->setChecked(cfg.proxy.enableHttp);
 }
 
 void ProxyPage::saveConfig() {
@@ -164,6 +179,8 @@ void ProxyPage::saveConfig() {
     cfg.proxy.maxIpCount = static_cast<uint32_t>(m_ipCountSpin->value());
     cfg.proxy.bindHost = m_hostEdit->text().toStdString();
     cfg.proxy.bindPort = static_cast<uint16_t>(m_portSpin->value());
+    cfg.proxy.enableSocks5 = m_socks5Check->isChecked();
+    cfg.proxy.enableHttp = m_httpCheck->isChecked();
     Application::instance().configManager().updateConfig(cfg);
     Application::instance().configManager().save();
 }

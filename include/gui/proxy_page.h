@@ -30,6 +30,7 @@ private:
     QWidget* createNetworkSection();
     QWidget* createAuthSection();
     QWidget* createBindingSection();
+    QWidget* createProtocolSection();
 
     // Network
     QComboBox* m_modeCombo{nullptr};
@@ -42,6 +43,10 @@ private:
     // Binding
     QLineEdit* m_hostEdit{nullptr};
     QSpinBox* m_portSpin{nullptr};
+
+    // Protocol
+    QCheckBox* m_socks5Check{nullptr};
+    QCheckBox* m_httpCheck{nullptr};
 
     // Buttons
     QPushButton* m_rotateButton{nullptr};
