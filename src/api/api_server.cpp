@@ -81,9 +81,9 @@ void ApiServer::readMore(std::shared_ptr<AsyncSocket> client,
 
     auto chunk = std::make_shared<std::vector<uint8_t>>(4096);
     client->asyncRead(boost::asio::buffer(*chunk),
-        [this, client, buffer, timer, chunk](auto ec, size_t bytesRead) {
+        [this, client, buffer, timer, chunk](const boost::system::error_code& ec, size_t bytesRead) {
             boost::system::error_code ignore;
-            timer->cancel(ignore);
+            timer->cancel();
             if (ec) { client->close(); return; }
             buffer->append(reinterpret_cast<const char*>(chunk->data()), bytesRead);
 
