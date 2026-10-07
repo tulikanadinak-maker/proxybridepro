@@ -30,7 +30,7 @@
 namespace ProxyBridge {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("ProxyBridge Pro v2");
+    setWindowTitle("Witeck Proxy Unlimited v2");
     setMinimumSize(1100, 650);
     m_themeManager = std::make_unique<ThemeManager>(this);
     m_themeManager->applyDarkTheme();

@@ -47,6 +47,9 @@ struct IPv6Subnet {
     std::string ifaceName;    // Network interface name
     std::string gateway;      // Default gateway
     uint32_t validLifetimeSec = 0;  // remaining RA lifetime (larger = newer prefix)
+    bool autoOrigin = false;  // true = prefix came from SLAAC/RA or DHCP (ISP-delegated,
+                              // routable). false = Manual/statis (NOT routable as pool base).
+    uint64_t ifaceLuid = 0;   // Windows interface LUID (used to scope stale-address purge)
 };
 
 /**
@@ -60,6 +63,10 @@ struct IPv6Slot {
     std::chrono::steady_clock::time_point createdAt;
     uint64_t requestCount = 0;
     uint64_t bytesTransferred = 0;
+    // #19: quarantine bookkeeping. A slot whose bind the OS overrode is parked
+    // for a while instead of serving every request with the wrong source IP.
+    int bindFailures = 0;
+    std::chrono::steady_clock::time_point quarantinedUntil{};
 };
 
 /**
@@ -162,6 +169,38 @@ public:
      * @return Vector of detected subnets
      */
     static std::vector<IPv6Subnet> detectAllSubnets();
+
+    /**
+     * @brief Rotate a single slot (one client changes its own IP only).
+     * @param slotId Slot to rotate
+     * @return true if the slot got a new, bound address
+     */
+    bool rotateSlot(uint32_t slotId);
+
+    /**
+     * @brief Mark a slot as unusable after the OS silently overrode its bind.
+     *
+     * When the outbound local endpoint does not match the requested pool address
+     * the slot is NOT actually doing its job - keeping it in rotation makes every
+     * subsequent connection egress via the ISP SLAAC address. Deactivate it so
+     * the pool converges on addresses the ISP really honours.
+     *
+     * @return true if a matching slot was found and deactivated
+     */
+    bool markSlotUnhealthyBind(const std::string& addr);
+
+    /**
+     * @brief Remove stale pool addresses left behind by a previous session.
+     *
+     * Deletes every non-SLAAC/DHCP address that sits inside the CURRENT pool
+     * prefix (i.e. addresses this application added on an earlier run and that
+     * Windows kept). Addresses of SLAAC/DHCP origin are never touched, and
+     * nothing outside the pool prefix is ever touched - so a user's static
+     * address in another prefix stays intact.
+     *
+     * @return number of addresses removed
+     */
+    uint32_t purgeStaleAddresses();
 
     /**
      * @brief Bind an IPv6 address to an interface (OS-level)

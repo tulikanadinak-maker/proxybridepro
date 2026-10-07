@@ -1,4 +1,6 @@
 ﻿#include "ipv6/ipv6_manager.h"
+#include "core/application.h"
+#include "log/log_manager.h"
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -104,9 +106,19 @@ IPv6Manager::IPv6Manager() = default;
 IPv6Manager::~IPv6Manager() { stop(); }
 
 bool IPv6Manager::initialize(const IPv6Subnet& subnet, uint32_t slotCount) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_subnet = subnet;
-    m_slotCount = slotCount;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_subnet = subnet;
+        m_slotCount = slotCount;
+    }
+    // #19: clean up stale Manual addresses left in this prefix by an earlier
+    // session BEFORE binding new ones (prevents "402 stuck addresses" buildup).
+    uint32_t purged = purgeStaleAddresses();
+    if (purged > 0) {
+        Application::instance().logManager().log(LogLevel::Info,
+            "Purged " + std::to_string(purged) +
+            " stale pool address(es) from previous session", "IPv6Manager");
+    }
     return true;
 }
 
@@ -203,10 +215,14 @@ std::optional<std::pair<uint32_t, std::string>> IPv6Manager::getNextAddressSlot(
     if (m_slots.empty()) return std::nullopt;
 
     // Skip inactive slots - round-robin only among working addresses.
+    auto now = std::chrono::steady_clock::now();
     for (size_t attempts = 0; attempts < m_slots.size(); ++attempts) {
         uint32_t index = m_currentIndex.fetch_add(1) % static_cast<uint32_t>(m_slots.size());
         auto& slot = m_slots[index];
         if (!slot.active) continue;
+        // #19: skip quarantined slots (OS overrode their bind recently).
+        if (slot.quarantinedUntil.time_since_epoch().count() != 0 &&
+            now < slot.quarantinedUntil) continue;
 #ifdef _WIN32
         // Only hand out addresses that are STILL on the interface right now.
         // A slot can go stale (e.g. Windows removed the address), and binding
@@ -448,14 +464,20 @@ bool IPv6Manager::unbindAddress(const IPv6Address& addr, const std::string& ifac
 
 IPv6Subnet IPv6Manager::autoDetectSubnet() {
     auto all = detectAllSubnets();
-    // Prefer internet-connected prefixes, then the one with the most
-    // remaining lifetime (i.e. the newest ISP delegation).
-    std::stable_sort(all.begin(), all.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
+    // Prefer ISP-delegated (SLAAC/DHCP) prefixes, then internet-connected, then
+    // the one with the most remaining lifetime (newest ISP delegation).
+    // Manual/static prefixes are excluded from auto-selection entirely (#19).
+    std::vector<IPv6Subnet> candidates;
+    for (const auto& s : all) {
+        if (s.autoOrigin) candidates.push_back(s);
+    }
+    if (candidates.empty()) candidates = all;  // fallback (no auto prefix at all)
+    std::stable_sort(candidates.begin(), candidates.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
         bool aNet = !a.gateway.empty(), bNet = !b.gateway.empty();
         if (aNet != bNet) return aNet;
         return a.validLifetimeSec > b.validLifetimeSec;
     });
-    if (!all.empty()) return all[0];
+    if (!candidates.empty()) return candidates[0];
     return IPv6Subnet{};
 }
 
@@ -528,6 +550,22 @@ std::vector<IPv6Subnet> IPv6Manager::detectAllSubnets() {
                 subnet.ifaceName = ifName;
                 subnet.gateway = gateway;
                 subnet.validLifetimeSec = unicast->ValidLifetime;
+                subnet.ifaceLuid = adapter->Luid.Value;
+
+                // #19: only SLAAC/RA or DHCP originated addresses are ISP-delegated
+                // and truly routed. Manual/static addresses (user-added, lifetime
+                // infinite) must NEVER win auto-selection - they caused the pool to
+                // bind to a dead static prefix while the live RA prefix was ignored.
+                switch (unicast->PrefixOrigin) {
+                    case IpPrefixOriginDhcp:
+                    case IpPrefixOriginRouterAdvertisement:
+                    case IpPrefixOriginWellKnown:
+                        subnet.autoOrigin = true;
+                        break;
+                    default:
+                        subnet.autoOrigin = false;
+                        break;
+                }
 
                 // Avoid duplicates - keep the entry with the LONGEST remaining
                 // lifetime (the newest RA / most current ISP prefix).
@@ -537,6 +575,9 @@ std::vector<IPv6Subnet> IPv6Manager::detectAllSubnets() {
                         duplicate = true;
                         if (subnet.validLifetimeSec > existing.validLifetimeSec)
                             existing.validLifetimeSec = subnet.validLifetimeSec;
+                        // If ANY instance of this prefix is ISP-delegated, mark the
+                        // whole entry as auto-origin (#19).
+                        if (subnet.autoOrigin) existing.autoOrigin = true;
                         break;
                     }
                 }
@@ -551,6 +592,102 @@ std::vector<IPv6Subnet> IPv6Manager::detectAllSubnets() {
 #endif
 
     return results;
+}
+
+bool IPv6Manager::rotateSlot(uint32_t slotId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& slot : m_slots) {
+        if (slot.id != slotId || !slot.active) return false;
+        IPv6Address newAddr = generateRandomAddress();
+        // Ensure the new address is unique among current slots.
+        for (int guard = 0; guard < 32; ++guard) {
+            bool dup = false;
+            for (const auto& other : m_slots)
+                if (&other != &slot && other.address == newAddr) { dup = true; break; }
+            if (!dup) break;
+            newAddr = generateRandomAddress();
+        }
+        if (!bindAddress(newAddr, slot.ifaceName)) return false;
+        unbindAddress(slot.address, slot.ifaceName);
+        slot.address = newAddr;
+        slot.requestCount = 0;
+        slot.bytesTransferred = 0;
+        slot.createdAt = std::chrono::steady_clock::now();
+        slot.bindFailures = 0;
+        slot.quarantinedUntil = {};
+        return true;
+    }
+    return false;
+}
+
+bool IPv6Manager::markSlotUnhealthyBind(const std::string& addr) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& slot : m_slots) {
+        if (!slot.active) continue;
+        if (slot.address.toString() != addr) continue;
+        slot.bindFailures++;
+        // Quarantine: 60s on first strike, doubling per strike, capped at 15 min.
+        int fail = slot.bindFailures;
+        auto delay = std::chrono::seconds(std::min(60 * (1 << std::min(fail - 1, 4)), 900));
+        slot.quarantinedUntil = std::chrono::steady_clock::now() + delay;
+        return true;
+    }
+    return false;
+}
+
+uint32_t IPv6Manager::purgeStaleAddresses() {
+#ifdef _WIN32
+    // Collect all addresses that exist on the target interface, then delete the
+    // manual ones that belong to the pool prefix. SLAAC/DHCP (ISP) addresses
+    // are NEVER deleted, and addresses in other prefixes are NEVER deleted.
+    MIB_UNICASTIPADDRESS_TABLE* table = nullptr;
+    if (GetUnicastIpAddressTable(AF_INET6, &table) != NO_ERROR || !table)
+        return 0;
+
+    const std::array<uint8_t, 16>& pfx = m_subnet.prefix.bytes;
+    int prefixBytes = m_subnet.prefixLength / 8;  // /64 -> 8 bytes
+    std::string iface = m_subnet.ifaceName;
+    uint32_t removed = 0;
+
+    struct Pending { std::string addrStr; };
+    std::vector<Pending> pending;
+
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const auto& row = table->Table[i];
+        if (row.Address.Ipv6.sin6_family != AF_INET6) continue;
+        if (!iface.empty() && m_subnet.ifaceLuid != 0 &&
+            row.InterfaceLuid.Value != m_subnet.ifaceLuid) continue;
+
+        const uint8_t* a = reinterpret_cast<const uint8_t*>(&row.Address.Ipv6.sin6_addr);
+        // Must be inside the pool prefix
+        bool inside = true;
+        for (int b = 0; b < prefixBytes && b < 16; ++b) {
+            if (a[b] != pfx[b]) { inside = false; break; }
+        }
+        if (!inside) continue;
+
+        // Only purge Manual/statis origin - never ISP addresses (#19)
+        if (row.PrefixOrigin != IpPrefixOriginManual) continue;
+
+        char buf[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &row.Address.Ipv6.sin6_addr, buf, sizeof(buf));
+        pending.push_back({buf});
+    }
+    FreeMibTable(table);
+
+    for (auto& p : pending) {
+        // Reuse unbindAddress (it validates tokens and does the deletion).
+        IPv6Address a;
+        unsigned char tmp[16];
+        if (inet_pton(AF_INET6, p.addrStr.c_str(), tmp) == 1) {
+            std::memcpy(a.bytes.data(), tmp, 16);
+            if (unbindAddress(a, iface)) removed++;
+        }
+    }
+    return removed;
+#else
+    return 0;
+#endif
 }
 
 } // namespace ProxyBridge

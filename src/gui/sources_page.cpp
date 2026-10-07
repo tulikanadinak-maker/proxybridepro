@@ -156,9 +156,11 @@ void SourcesPage::refreshDetection() {
 
     m_detectedSubnets = IPv6Manager::detectAllSubnets();
 
-    // Sort: subnets WITH a gateway (internet) first
+    // Sort: ISP-delegated (auto origin) first, then with gateway (internet),
+    // then newest prefix. Manual/static prefixes sink to the bottom (#19).
     std::vector<IPv6Subnet> subs = m_detectedSubnets;
     std::stable_sort(subs.begin(), subs.end(), [](const IPv6Subnet& a, const IPv6Subnet& b) {
+        if (a.autoOrigin != b.autoOrigin) return a.autoOrigin;   // ISP prefix first
         bool aNet = !a.gateway.empty(), bNet = !b.gateway.empty();
         if (aNet != bNet) return aNet;                 // internet-connected first
         return a.validLifetimeSec > b.validLifetimeSec; // then newest prefix first
@@ -210,11 +212,19 @@ void SourcesPage::refreshDetection() {
     if (!bound.ifaceName.empty() && mgr.isActive()) {
         std::string boundPrefix = bound.prefix.toString();
         bool stillPresent = false;
+        bool boundAuto = false;   // bound prefix came from SLAAC/DHCP (#19)
         uint32_t boundLifetime = 0;
         const IPv6Subnet* best = nullptr;
         for (const auto& sub : m_detectedSubnets) {
             if (sub.prefix.toString() == boundPrefix &&
-                sub.ifaceName == bound.ifaceName) { stillPresent = true; boundLifetime = sub.validLifetimeSec; }
+                sub.ifaceName == bound.ifaceName) {
+                stillPresent = true;
+                boundLifetime = sub.validLifetimeSec;
+                if (sub.autoOrigin) boundAuto = true;
+            }
+            // #19: rebind candidate MUST be ISP-delegated (autoOrigin) - a static
+            // prefix with infinite lifetime must never hijack the pool.
+            if (!sub.autoOrigin) continue;
             if (!sub.gateway.empty() && (!best ||
                 (sub.ifaceName == bound.ifaceName && best->ifaceName != bound.ifaceName) ||
                 (sub.ifaceName == bound.ifaceName && sub.validLifetimeSec > best->validLifetimeSec)))
@@ -229,7 +239,12 @@ void SourcesPage::refreshDetection() {
             boundLifetime > 0 &&
             best->validLifetimeSec > boundLifetime + 600 &&
             best->ifaceName == bound.ifaceName;
-        if ((!stillPresent || newerExists) && best) {
+        // #19: if the bound prefix is NOT ISP-delegated (static/manual) and a live
+        // ISP prefix exists, migrate even when "stillPresent" is true - presence
+        // is not routability.
+        bool boundIsStatic = stillPresent && !boundAuto;
+        bool staticMigration = boundIsStatic && best && cooldownOk;
+        if ((!stillPresent || newerExists || staticMigration) && best) {
             lastRebind = std::chrono::steady_clock::now();
             uint32_t slotCountVal = mgr.slotCount();
             mgr.stop();

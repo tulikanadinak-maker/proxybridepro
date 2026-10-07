@@ -31,7 +31,7 @@ struct ApiConfig {
     bool enabled = true;
 };
 
-using ApiHandler = std::function<std::string(const std::string& body)>;
+using ApiHandler = std::function<std::string(const std::string& body, const std::string& query)>;
 
 class ApiServer {
 public:

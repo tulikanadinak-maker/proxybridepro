@@ -73,9 +73,10 @@ void BackconnectProxy::connectOutbound(const std::string& targetHost, uint16_t t
         // Try connect with bind, with retry on mismatch
         connectWithRetry(targetHost, targetPort, bindAddr, 0, callback);
     } else {
-        Application::instance().logManager().log(LogLevel::Info,
+        Application::instance().logManager().log(LogLevel::Warning,
             "Outbound: " + targetHost + ":" + std::to_string(targetPort) +
-            " | No IPv6 pool, default route", "Backconnect");
+            " | POOL EXHAUSTED - no usable pool address, egress falls back to ISP SLAAC (single IP). "
+            "Check the Sources page: prefix must be the live ISP prefix.", "Backconnect");
 
         auto remote = std::make_shared<AsyncSocket>(m_ioContext);
         remote->asyncConnect(targetHost, targetPort,
@@ -161,7 +162,10 @@ void BackconnectProxy::connectWithRetry(const std::string& targetHost, uint16_t 
                 Application::instance().logManager().log(LogLevel::Warning,
                     "BIND NOTE: Requested=" + bindAddr +
                     " Actual=" + localEp +
-                    " | ISP overrides source address (normal for non-VPS)", "Backconnect");
+                    " | ISP overrides source address - slot quarantined", "Backconnect");
+                // #19: park this slot so rotation converges on addresses the ISP
+                // actually honours instead of serving the same SLAAC IP forever.
+                Application::instance().ipv6Manager().markSlotUnhealthyBind(bindAddr);
             }
 
             if (verified) {

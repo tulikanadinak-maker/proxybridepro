@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ProxyBridgePro VERSION 2.0.0 LANGUAGES CXX)
+project(WiteckProxyUnlimited VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,13 +107,13 @@ add_executable(pb_headless tests/headless_main.cpp)
     target_link_libraries(pb_headless PRIVATE ProxyBridgeCore)
     target_include_directories(pb_headless PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
-add_executable(ProxyBridgePro WIN32
+add_executable(WiteckProxyUnlimited WIN32
     src/main.cpp
     resources/resources.qrc
 )
 
-target_link_libraries(ProxyBridgePro PRIVATE
+target_link_libraries(WiteckProxyUnlimited PRIVATE
     ProxyBridgeGui
 )
 
-install(TARGETS ProxyBridgePro RUNTIME DESTINATION bin)
+install(TARGETS WiteckProxyUnlimited RUNTIME DESTINATION bin)

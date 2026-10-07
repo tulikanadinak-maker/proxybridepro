@@ -114,8 +114,9 @@ void ApiServer::processRequest(std::shared_ptr<AsyncSocket> client, const std::s
 
     // Strip query params for route matching
     std::string routePath = path;
+    std::string query;
     auto qpos = routePath.find('?');
-    if (qpos != std::string::npos) routePath = routePath.substr(0, qpos);
+    if (qpos != std::string::npos) { query = routePath.substr(qpos + 1); routePath = routePath.substr(0, qpos); }
 
     // Find handler
     std::string key = method + " " + routePath;
@@ -124,8 +125,10 @@ void ApiServer::processRequest(std::shared_ptr<AsyncSocket> client, const std::s
         std::string body;
         auto bodyStart = raw.find("\r\n\r\n");
         if (bodyStart != std::string::npos) body = raw.substr(bodyStart + 4);
-        std::string result = it->second(body);
-        sendResponse(client, 200, "application/json", result);
+        std::string result = it->second(body, query);
+        // Serve HTML when a handler returns a document, JSON otherwise.
+        bool isHtml = result.rfind("<!DOCTYPE", 0) == 0 || result.rfind("<html", 0) == 0;
+        sendResponse(client, 200, isHtml ? "text/html; charset=utf-8" : "application/json", result);
     } else {
         sendResponse(client, 404, "application/json", "{\"error\":\"not found\"}");
     }

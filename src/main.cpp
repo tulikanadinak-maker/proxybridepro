@@ -8,9 +8,9 @@ int main(int argc, char* argv[]) {
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
     QApplication app(argc, argv);
-    app.setApplicationName("ProxyBridge Pro");
+    app.setApplicationName("Witeck Proxy Unlimited");
     app.setApplicationVersion("2.0.0");
-    app.setOrganizationName("ProxyBridgePro");
+    app.setOrganizationName("WiteckProxyUnlimited");
     app.setStyle(QStyleFactory::create("Fusion"));
 
     auto& core = ProxyBridge::Application::instance();
